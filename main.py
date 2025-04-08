@@ -13,7 +13,7 @@ def buscar_restaurantes(
     abierto_ahora: Optional[bool] = False,
     precio: Optional[str] = None,
     min_puntuacion: float = 4.0,
-    min_reviews: int = 1500
+    min_reviews: int = 1550
 ):
     url = "https://maps.googleapis.com/maps/api/place/textsearch/json"
 
