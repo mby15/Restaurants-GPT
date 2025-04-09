@@ -1,10 +1,16 @@
 from fastapi import FastAPI, Query
 from typing import Optional
 import requests
+import os
+from dotenv import load_dotenv
+
+# Carga las variables de entorno del archivo .env
+load_dotenv(dotenv_path=".env")
+
+# Ahora, la clave se carga desde la variable de entorno "GOOGLE_API_KEY"
+API_KEY = os.getenv("GOOGLE_API_KEY")
 
 app = FastAPI()
-
-API_KEY = "AIzaSyABg_pZC-dH9HtQfhuWoLXbEpbiiHe2yRE"
 
 @app.get("/buscar")
 def buscar_restaurantes(
@@ -41,7 +47,6 @@ def buscar_restaurantes(
 
     resultados_filtrados = []
 
-    # Asegúrate de que todo lo siguiente esté indentado dentro de la función
     for lugar in data.get("results", []):
         nombre = lugar.get("name")
         direccion = lugar.get("formatted_address")
@@ -49,7 +54,6 @@ def buscar_restaurantes(
         reseñas = lugar.get("user_ratings_total")
         maps_url = f"https://www.google.com/maps/place/?q=place_id:{lugar.get('place_id')}"
 
-        # Asegúrate de que rating y reseñas estén bien definidos
         if rating and reseñas and float(rating) >= min_puntuacion and int(reseñas) >= min_reviews:
             resultados_filtrados.append({
                 "nombre": nombre,
@@ -59,4 +63,4 @@ def buscar_restaurantes(
                 "google_maps": maps_url
             })
 
-    return {"resultados": resultados_filtrados}  # El return debe estar dentro de la función
+    return {"resultados": resultados_filtrados}
