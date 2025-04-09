@@ -4,7 +4,7 @@ import os
 import re
 import spacy
 from spacy.matcher import Matcher
-from langdetect import detect  # Si no vas a usar detección de idioma, podrías eliminar esta importación
+from langdetect import detect  # Esta importación podrías eliminarla si no la usas
 from telegram import Update
 from telegram.ext import (
     ApplicationBuilder,
@@ -29,20 +29,19 @@ logging.basicConfig(
 # -------------------------------
 # Configuración de spaCy para español
 # -------------------------------
-
 # Asegúrate de haber ejecutado:
 #   python -m spacy download es_core_news_sm
 nlp_es = spacy.load("es_core_news_sm")
 
 def parse_query(query: str) -> dict:
     """
-    Procesa la consulta y extrae de ella:
+    Procesa la consulta y extrae:
       - acción: "comer", "cenar", etc.
       - calificador: "mejores", "populares", "típicos", "recomendados"
       - tipo: la categoría o tipo de comida
       - localizacion: la ciudad, barrio o punto de interés
 
-    Se usa una combinación de expresiones regulares y análisis con spaCy.
+    Se utiliza una combinación de expresiones regulares y análisis con spaCy.
     """
     resultado = {
         "accion": None,
@@ -71,7 +70,7 @@ def parse_query(query: str) -> dict:
         match = re.search(patron, query_low)
         if match:
             grupos = match.groupdict()
-            # Determinamos la acción
+            # Determina la acción
             if grupos.get("accion"):
                 resultado["accion"] = grupos["accion"].strip()
             else:
@@ -103,16 +102,51 @@ def parse_query(query: str) -> dict:
         if not resultado["tipo"]:
             candidatos = [token.text for token in doc if token.pos_ == "NOUN"]
             if candidatos:
-                resultado["tipo"] = " ".join(candidatos[:2])  # Se toma una combinación simple
+                resultado["tipo"] = " ".join(candidatos[:2])
     return resultado
 
-# -------------------------------
-# Funciones del bot de Telegram
-# -------------------------------
+# Número de resultados a mostrar por bloque (10 en este caso)
+RESULTADOS_POR_BLOQUE = 10
+
+async def enviar_siguiente_bloque(update: Update, context: ContextTypes.DEFAULT_TYPE, tipo_comida: str):
+    """
+    Envía el siguiente bloque de resultados y, si quedan más, informa al usuario
+    que puede ampliar la lista usando /continuar.
+    """
+    resultados = context.user_data.get('resultados', [])
+    indice = context.user_data.get('indice', 0)
+    mensaje_acumulado = ""
+    
+    for restaurante in resultados[indice: indice + RESULTADOS_POR_BLOQUE]:
+        nombre = restaurante.get('nombre')
+        direccion = restaurante.get('direccion')
+        puntuacion = restaurante.get('puntuacion')
+        reseñas = restaurante.get('reseñas')
+        tipo = tipo_comida.capitalize()
+        maps_url = restaurante.get('google_maps')
+        mensaje_acumulado += (
+            f"*{nombre}*\n"
+            f"📍 {direccion}\n"
+            f"⭐ ~{puntuacion} | 📝 +{reseñas:,} reseñas\n"
+            f"🍝 Tipo de comida: {tipo}\n"
+            f"🔗 [Enlace a Google Maps]({maps_url})\n\n"
+        )
+    
+    # Actualiza el índice para el próximo bloque
+    context.user_data['indice'] = indice + RESULTADOS_POR_BLOQUE
+    await update.message.reply_text(mensaje_acumulado, parse_mode='Markdown')
+
+    if context.user_data['indice'] < len(resultados):
+        # Notifica al usuario que escriba /continuar para ver más resultados
+        await update.message.reply_text("Si deseas ampliar la lista de resultados de esta búsqueda, escribe /continuar.")
+    else:
+        # Se limpian los datos de paginación cuando ya no quedan resultados
+        context.user_data.pop('resultados', None)
+        context.user_data.pop('indice', None)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
-    Muestra un mensaje de bienvenida en español.
+    Envía un mensaje de bienvenida en español.
     """
     logging.info("Comando /start recibido")
     mensaje = (
@@ -127,30 +161,25 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def buscar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
-    Procesa el comando /buscar, extrae el tipo de comida y la localización 
-    y solicita a la API correspondiente.
+    Procesa el comando /buscar, extrae el tipo de comida y la localización,
+    y realiza la búsqueda en la API correspondiente.
     """
-    # Obtiene la consulta completa a partir de los argumentos
     consulta = ' '.join(context.args)
     if not consulta:
         msg = "Por favor, incluye una consulta. Ejemplo: /buscar paella en Valencia"
         await update.message.reply_text(msg)
         return
 
-    # Analiza la consulta con la función de parseo
     datos = parse_query(consulta)
     tipo_comida = datos.get("tipo")
     lugar = datos.get("localizacion")
 
     if not tipo_comida or not lugar:
-        msg = (
-            "No entendí bien tu consulta. Asegúrate de escribir algo como: /buscar pizza en Valencia.\n"
-            "También puedes intentar /buscar pizza valencia."
-        )
+        msg = ("No entendí bien tu consulta. Asegúrate de escribir algo como: /buscar pizza en Valencia.\n"
+               "También puedes intentar /buscar pizza valencia.")
         await update.message.reply_text(msg)
         return
 
-    # Construye los parámetros para la petición a la API
     params = {
         'lugar': lugar.strip(),
         'tipo_comida': tipo_comida.strip(),
@@ -168,24 +197,10 @@ async def buscar(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reverse=True
         )
         if resultados:
-            mensaje = ""
-            for restaurante in resultados[:5]:
-                nombre = restaurante.get('nombre')
-                direccion = restaurante.get('direccion')
-                puntuacion = restaurante.get('puntuacion')
-                reseñas = restaurante.get('reseñas')
-                tipo = tipo_comida.capitalize()
-                maps_url = restaurante.get('google_maps')
-
-                # Armamos el mensaje para el restaurante
-                mensaje += (
-                    f"*{nombre}*\n"
-                    f"📍 {direccion}\n"
-                    f"⭐ ~{puntuacion} | 📝 +{reseñas:,} reseñas\n"
-                    f"🍝 Tipo de comida: {tipo}\n"
-                    f"🔗 [Enlace a Google Maps]({maps_url})\n\n"
-                )
-            await update.message.reply_text(mensaje, parse_mode='Markdown')
+            # Guarda los resultados y el índice en context.user_data para continuar
+            context.user_data['resultados'] = resultados
+            context.user_data['indice'] = 0
+            await enviar_siguiente_bloque(update, context, tipo_comida)
         else:
             msg = "No encontré resultados con esos criterios 😕"
             await update.message.reply_text(msg)
@@ -194,10 +209,24 @@ async def buscar(update: Update, context: ContextTypes.DEFAULT_TYPE):
         msg = "Error al consultar la API 😔"
         await update.message.reply_text(msg)
 
+async def continuar(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Envía el siguiente bloque de resultados, si existe una búsqueda previa.
+    """
+    if 'resultados' in context.user_data and 'indice' in context.user_data:
+        # Se asume que el tipo de comida es consistente en todos los resultados.
+        primeros_resultados = context.user_data.get('resultados', [])
+        if primeros_resultados:
+            # Si has almacenado explícitamente 'tipo_comida' en la búsqueda, úsalo.
+            # De lo contrario, se asume que el primer resultado contiene la clave 'tipo_comida'.
+            tipo_comida = primeros_resultados[0].get('tipo_comida', "Comida")
+        else:
+            tipo_comida = ""
+        await enviar_siguiente_bloque(update, context, tipo_comida)
+    else:
+        await update.message.reply_text("No hay búsqueda previa. Usa /buscar para iniciar una búsqueda.")
+
 async def friendly_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    Muestra un mensaje de asistencia en español si el usuario escribe texto sin comando.
-    """
     mensaje = (
         "¡Hola! Soy Alma, tu asistente personal para encontrar el restaurante perfecto. 😊\n"
         "¿Te ha pasado alguna vez que no sabes dónde ir a comer y te gustaría que alguien te diera las mejores opciones?\n"
@@ -212,17 +241,13 @@ async def friendly_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(mensaje)
 
 async def main():
-    # Construye la aplicación con tu token de bot
     app = ApplicationBuilder().token(TOKEN).build()
-
-    # Handlers de comandos
+    # Registra los handlers
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("buscar", buscar))
-
-    # Handler para mensajes de texto (sin comando)
+    app.add_handler(CommandHandler("continuar", continuar))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, friendly_chat))
-
-    # Inicia el bot en modo polling
+    # Ejecuta el bot en modo polling
     await app.run_polling(close_loop=False)
 
 if __name__ == '__main__':
@@ -231,7 +256,6 @@ if __name__ == '__main__':
         loop = asyncio.get_running_loop()
     except RuntimeError:
         loop = None
-
     if loop and loop.is_running():
         print("⚠️ Ya hay un bucle corriendo. Ejecuta 'await main()' si estás en un notebook o cambia de entorno.")
     else:
