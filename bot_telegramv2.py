@@ -1,6 +1,10 @@
 import logging
 import requests
 import os
+import re
+import spacy
+from spacy.matcher import Matcher
+from langdetect import detect
 from telegram import Update
 from telegram.ext import (
     ApplicationBuilder,
@@ -11,7 +15,7 @@ from telegram.ext import (
 )
 from dotenv import load_dotenv
 
-# Carga el archivo .env
+# Cargar el archivo .env
 load_dotenv(dotenv_path=".env")
 
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -19,12 +23,110 @@ API_URL = "https://restaurants-gpt.onrender.com/buscar"
 
 logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
 
+# -------------------------------
+# Funciones NLP para extraer la consulta
+# -------------------------------
+
+# Cargar modelos de spaCy
+# Es importante haber descargado previamente los modelos:
+#  python -m spacy download es_core_news_sm
+#  python -m spacy download en_core_web_sm
+nlp_es = spacy.load("es_core_news_sm")
+nlp_en = spacy.load("en_core_web_sm")
+
+def get_nlp_model(text: str):
+    """
+    Detecta el idioma del texto y retorna el modelo correspondiente.
+    Por defecto, en caso de error, se asume español.
+    """
+    try:
+        idioma = detect(text)
+    except Exception as e:
+        idioma = "es"
+    if idioma.startswith("en"):
+        return nlp_en, idioma
+    else:
+        return nlp_es, idioma
+
+def parse_query(query: str) -> dict:
+    """
+    Procesa la consulta y extrae de ella:
+      - acción: "comer", "cenar", etc.
+      - calificador: "mejores", "populares", "típicos", "recomendados"
+      - tipo: la categoría o tipo de comida
+      - localizacion: la ciudad, barrio o punto de interés
+
+    Se usa una combinación de expresiones regulares y análisis con spaCy.
+    """
+    resultado = {
+        "accion": None,
+        "calificador": None,
+        "tipo": None,
+        "localizacion": None
+    }
+    
+    # Convertir a minúsculas para facilitar patrones
+    query_low = query.lower().strip()
+
+    # Primer paso: intento con expresiones regulares para patrones conocidos
+    patrones = [
+        # Patrón: "dónde comer/cenar <tipo> en <localizacion>" o "dónde cenar <tipo> en <lugar>"
+        r"(?:dónde\s+)?(?P<accion>comer|cenar)\s+(?P<tipo>.+?)\s+(?:en|cerca de|con vistas a)\s+(?P<localizacion>.+)",
+        # Patrón: "<calificador> restaurantes <opcionalmente tipo> en <localizacion>"
+        r"(?P<calificador>mejores|populares|típicos|recomendados)\s+restaurantes(?:\s+(?P<tipo>[\w\s]+?))?\s+en\s+(?P<localizacion>.+)",
+        # Patrón: "restaurantes (de)? <tipo> (recomendados) en/cerca de <localizacion>"
+        r"(?:restaurantes|lugares)\s+(?:de\s+)?(?P<tipo>[\w\s]+?)\s+(?:recomendados|para\s+comer)?\s*(?:en|cerca de|con vistas a)\s+(?P<localizacion>.+)",
+        # Patrón simple: "<tipo> en <localizacion>"
+        r"(?P<tipo>[\w\s]+)\s+(?:en|cerca de|con vistas a)\s+(?P<localizacion>.+)"
+    ]
+    
+    for patron in patrones:
+        match = re.search(patron, query_low)
+        if match:
+            grupos = match.groupdict()
+            if grupos.get("accion"):
+                resultado["accion"] = grupos["accion"].strip()
+            else:
+                # Intenta inferir la acción a partir de palabras clave
+                if "cenar" in query_low:
+                    resultado["accion"] = "cenar"
+                elif "comer" in query_low:
+                    resultado["accion"] = "comer"
+                else:
+                    resultado["accion"] = "buscar"
+            if grupos.get("calificador"):
+                resultado["calificador"] = grupos["calificador"].strip()
+            if grupos.get("tipo"):
+                resultado["tipo"] = grupos["tipo"].strip()
+            if grupos.get("localizacion"):
+                resultado["localizacion"] = grupos["localizacion"].strip()
+            break  # Si se encuentra un patrón coincidente, se sale del bucle.
+
+    # Si la extracción con regex no fue suficiente, se recurre a spaCy (NER)
+    if not resultado["localizacion"] or not resultado["tipo"]:
+        nlp_model, _ = get_nlp_model(query)
+        doc = nlp_model(query)
+        for ent in doc.ents:
+            if ent.label_ in ["LOC", "GPE", "FACILITY"]:
+                if not resultado["localizacion"]:
+                    resultado["localizacion"] = ent.text
+        # Si aún falta el tipo, se pueden extraer sustantivos relevantes
+        if not resultado["tipo"]:
+            candidatos = [token.text for token in doc if token.pos_ == "NOUN"]
+            if candidatos:
+                resultado["tipo"] = " ".join(candidatos[:2])  # Se toma una combinación simple
+    return resultado
+
+# -------------------------------
+# Funciones del bot de Telegram
+# -------------------------------
+
 def detectar_idioma(update: Update) -> str:
     idioma_usuario = update.effective_user.language_code
     return idioma_usuario if idioma_usuario in ["es", "en", "fr", "it", "de"] else "es"
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    print("DEBUG: Comando /start recibido")
+    logging.info("Comando /start recibido")
     lang = detectar_idioma(update)
     if lang == "es":
         mensaje = (
@@ -46,12 +148,22 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def buscar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     lang = detectar_idioma(update)
+    # Obtiene la consulta completa a partir de los argumentos
     consulta = ' '.join(context.args)
-    if ' en ' not in consulta:
-        msg = "Formato incorrecto. Usa: /buscar pizza en Valencia" if lang == "es" else "Wrong format. Use: /buscar pizza in Valencia"
+    if not consulta:
+        msg = "Por favor, incluye una consulta. Ejemplo: /buscar paella en Valencia" if lang == "es" else "Please include a query. E.g., /buscar paella in Valencia"
         await update.message.reply_text(msg)
         return
-    tipo_comida, lugar = consulta.split(' en ')
+
+    # Se procesa la consulta usando el modelo NLP
+    datos = parse_query(consulta)
+    tipo_comida = datos.get("tipo")
+    lugar = datos.get("localizacion")
+    if not tipo_comida or not lugar:
+        msg = "No entendí bien tu consulta. Asegúrate de escribir algo como: /buscar pizza en Valencia" if lang == "es" else "I didn't understand your query. Please try /buscar pizza in Valencia"
+        await update.message.reply_text(msg)
+        return
+
     params = {
         'lugar': lugar.strip(),
         'tipo_comida': tipo_comida.strip(),
@@ -70,6 +182,7 @@ async def buscar(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 direccion = restaurante.get('direccion')
                 puntuacion = restaurante.get('puntuacion')
                 reseñas = restaurante.get('reseñas')
+                # Se utiliza el tipo de comida detectado, capitalizado.
                 tipo = tipo_comida.capitalize()
                 maps_url = restaurante.get('google_maps')
                 mensaje += (
