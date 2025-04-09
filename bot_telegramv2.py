@@ -117,7 +117,7 @@ async def enviar_siguiente_bloque(update: Update, context: ContextTypes.DEFAULT_
     indice = context.user_data.get('indice', 0)
     mensaje_acumulado = ""
     
-    for restaurante in resultados[indice: indice + RESULTADOS_PER_BLOQUE]:
+    for restaurante in resultados[indice: indice + RESULTADOS_POR_BLOQUE]:
         nombre = restaurante.get('nombre')
         direccion = restaurante.get('direccion')
         puntuacion = restaurante.get('puntuacion')
@@ -133,7 +133,7 @@ async def enviar_siguiente_bloque(update: Update, context: ContextTypes.DEFAULT_
         )
     
     # Actualiza el índice para el próximo bloque
-    context.user_data['indice'] = indice + RESULTADOS_PER_BLOQUE
+    context.user_data['indice'] = indice + RESULTADOS_POR_BLOQUE
     await update.message.reply_text(mensaje_acumulado, parse_mode='Markdown')
 
     if context.user_data['indice'] < len(resultados):
@@ -227,9 +227,10 @@ async def continuar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("No hay búsqueda previa. Usa /buscar para iniciar una búsqueda.")
 
+# Se puede mantener friendly_chat o eliminarlo si no se desea respuesta a mensajes sin comando.
 async def friendly_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     mensaje = (
-        "Disculpa no soy capaz de entenderte, intenta escribir frases como: \n"
+        "Disculpa, no soy capaz de entenderte. Intenta escribir frases como:\n"
         "Dónde cenar comida mexicana en Barcelona\n"
         "Restaurantes populares de comida india en Madrid\n"
         "Comida tradicional en Murcia\n\n"
