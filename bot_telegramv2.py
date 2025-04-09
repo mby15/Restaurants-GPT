@@ -4,7 +4,7 @@ import os
 import re
 import spacy
 from spacy.matcher import Matcher
-from langdetect import detect  # Esta importación podrías eliminarla si no la usas
+from langdetect import detect  # Puedes eliminarla si no la usas en otros sitios
 from telegram import Update
 from telegram.ext import (
     ApplicationBuilder,
@@ -70,7 +70,7 @@ def parse_query(query: str) -> dict:
         match = re.search(patron, query_low)
         if match:
             grupos = match.groupdict()
-            # Determina la acción
+            # Determinamos la acción
             if grupos.get("accion"):
                 resultado["accion"] = grupos["accion"].strip()
             else:
@@ -110,14 +110,14 @@ RESULTADOS_POR_BLOQUE = 10
 
 async def enviar_siguiente_bloque(update: Update, context: ContextTypes.DEFAULT_TYPE, tipo_comida: str):
     """
-    Envía el siguiente bloque de resultados y, si quedan más, informa al usuario
-    que puede ampliar la lista usando /continuar.
+    Envía el siguiente bloque de resultados y, si quedan más,
+    informa al usuario que escriba /continuar para ampliar la lista.
     """
     resultados = context.user_data.get('resultados', [])
     indice = context.user_data.get('indice', 0)
     mensaje_acumulado = ""
     
-    for restaurante in resultados[indice: indice + RESULTADOS_POR_BLOQUE]:
+    for restaurante in resultados[indice: indice + RESULTADOS_PER_BLOQUE]:
         nombre = restaurante.get('nombre')
         direccion = restaurante.get('direccion')
         puntuacion = restaurante.get('puntuacion')
@@ -133,14 +133,12 @@ async def enviar_siguiente_bloque(update: Update, context: ContextTypes.DEFAULT_
         )
     
     # Actualiza el índice para el próximo bloque
-    context.user_data['indice'] = indice + RESULTADOS_POR_BLOQUE
+    context.user_data['indice'] = indice + RESULTADOS_PER_BLOQUE
     await update.message.reply_text(mensaje_acumulado, parse_mode='Markdown')
 
     if context.user_data['indice'] < len(resultados):
-        # Notifica al usuario que escriba /continuar para ver más resultados
         await update.message.reply_text("Si deseas ampliar la lista de resultados de esta búsqueda, escribe /continuar.")
     else:
-        # Se limpian los datos de paginación cuando ya no quedan resultados
         context.user_data.pop('resultados', None)
         context.user_data.pop('indice', None)
 
@@ -150,12 +148,19 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     logging.info("Comando /start recibido")
     mensaje = (
-        "¡Hola! Soy Alma Gourmet, tu bot de búsqueda de los mejores restaurantes 🍽️ según Google Maps\n"
-        "Usa el comando:\n"
+        "¡Hola! Soy Alma, tu asistente personal para encontrar el restaurante perfecto 🍽️ según Google Maps. 😊\n\n"
+        "🌟Usa el comando:\n"
         "/buscar <tipo_comida> en <ciudad>\n"
         "Ejemplo: /buscar ramen en Madrid\n"
         "Si no incluyes 'en', también intentaré adivinar lo que necesitas.\n"
-        "¡Disfruta!"
+        "¡Disfruta!🌟\n\n"
+        "Generalmente, comienzo buscando restaurantes en tu zona con una excelente reputación: al menos 1500 reseñas y una puntuación mínima de 4.0.\n\n"
+        "Cuéntame:\n"
+        "- ¿En qué ciudad o zona te gustaría buscar?\n"
+        "- ¿Qué tipo de comida prefieres? (por ejemplo, pizza, sushi, comida vegana)\n"
+        "- ¿Qué rango de precio buscas? ($: Económico, $$: Medio, $$$: Alto, $$$$: Gama alta)\n"
+        "Si lo deseas, también puedo consultar si están abiertos en este momento.\n"
+        "¡Estoy aquí para ayudarte a descubrir el mejor lugar para comer!"
     )
     await update.message.reply_text(mensaje)
 
@@ -197,7 +202,6 @@ async def buscar(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reverse=True
         )
         if resultados:
-            # Guarda los resultados y el índice en context.user_data para continuar
             context.user_data['resultados'] = resultados
             context.user_data['indice'] = 0
             await enviar_siguiente_bloque(update, context, tipo_comida)
@@ -214,11 +218,8 @@ async def continuar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     Envía el siguiente bloque de resultados, si existe una búsqueda previa.
     """
     if 'resultados' in context.user_data and 'indice' in context.user_data:
-        # Se asume que el tipo de comida es consistente en todos los resultados.
         primeros_resultados = context.user_data.get('resultados', [])
         if primeros_resultados:
-            # Si has almacenado explícitamente 'tipo_comida' en la búsqueda, úsalo.
-            # De lo contrario, se asume que el primer resultado contiene la clave 'tipo_comida'.
             tipo_comida = primeros_resultados[0].get('tipo_comida', "Comida")
         else:
             tipo_comida = ""
@@ -228,9 +229,10 @@ async def continuar(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def friendly_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     mensaje = (
-        "¡Hola! Soy Alma, tu asistente personal para encontrar el restaurante perfecto. 😊\n"
-        "¿Te ha pasado alguna vez que no sabes dónde ir a comer y te gustaría que alguien te diera las mejores opciones?\n"
-        "Generalmente, comienzo buscando restaurantes en tu zona con una excelente reputación: al menos 1500 reseñas y una puntuación mínima de 4.0.\n\n"
+        "Disculpa no soy capaz de entenderte, intenta escribir frases como: \n"
+        "Dónde cenar comida mexicana en Barcelona\n"
+        "Restaurantes populares de comida india en Madrid\n"
+        "Comida tradicional en Murcia\n\n"
         "Cuéntame:\n"
         "- ¿En qué ciudad o zona te gustaría buscar?\n"
         "- ¿Qué tipo de comida prefieres? (por ejemplo, pizza, sushi, comida vegana)\n"
@@ -247,7 +249,6 @@ async def main():
     app.add_handler(CommandHandler("buscar", buscar))
     app.add_handler(CommandHandler("continuar", continuar))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, friendly_chat))
-    # Ejecuta el bot en modo polling
     await app.run_polling(close_loop=False)
 
 if __name__ == '__main__':
