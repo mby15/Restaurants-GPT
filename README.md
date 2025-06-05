@@ -1,5 +1,5 @@
 # Restaurants-GPT
-
+ probando ramas en git
 **Restaurants-GPT** es un proyecto que permite a los usuarios buscar restaurantes en diferentes ubicaciones, basándose en sus preferencias de tipo de comida, puntuación, número de reseñas y rango de precios. El proyecto está basado en un asistente GPT que interactúa con la **API de Google Maps** para proporcionar recomendaciones precisas y relevantes, además de incluir enlaces a Google Maps para facilitar la localización de los restaurantes.
 
 ## Objetivo
