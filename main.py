@@ -5,7 +5,7 @@ import os
 from dotenv import load_dotenv
 
 # Carga las variables de entorno del archivo .env
-load_dotenv(dotenv_path=".env")
+load_dotenv(doten_path=".env")
 
 # Ahora, la clave se carga desde la variable de entorno "GOOGLE_API_KEY"
 API_KEY = os.getenv("GOOGLE_API_KEY")
